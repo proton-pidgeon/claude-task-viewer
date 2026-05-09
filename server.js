@@ -413,6 +413,35 @@ app.delete('/api/tasks/:sessionId/:taskId', async (req, res) => {
   }
 });
 
+// API: Delete an entire session (removes session directory and all its tasks)
+app.delete('/api/sessions/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const sessionPath = path.join(TASKS_DIR, sessionId);
+
+    // Path-traversal guard: must resolve inside TASKS_DIR
+    const resolved = path.resolve(sessionPath);
+    const tasksRoot = path.resolve(TASKS_DIR);
+    if (!resolved.startsWith(tasksRoot + path.sep) && resolved !== tasksRoot) {
+      return res.status(400).json({ error: 'Invalid session id' });
+    }
+    if (resolved === tasksRoot) {
+      return res.status(400).json({ error: 'Refusing to delete tasks root' });
+    }
+
+    if (!existsSync(resolved)) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    await fs.rm(resolved, { recursive: true, force: true });
+    broadcast({ type: 'update', event: 'session-deleted', sessionId });
+    res.json({ success: true, sessionId });
+  } catch (error) {
+    console.error('Error deleting session:', error);
+    res.status(500).json({ error: 'Failed to delete session' });
+  }
+});
+
 // SSE endpoint for live updates
 app.get('/api/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');

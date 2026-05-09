@@ -68,6 +68,62 @@
     /* Layout */
     .app { display: flex; height: 100vh; }
 
+    .app.sidebar-hidden .sidebar { display: none; }
+
+    .sidebar-toggle-show {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      z-index: 10000;
+      width: 28px;
+      height: 28px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      padding: 0;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+    }
+
+    .app.sidebar-hidden .sidebar-toggle-show { display: flex; }
+
+    .sidebar-toggle-show:hover {
+      color: var(--text-primary);
+      border-color: var(--text-muted);
+      background: var(--bg-hover);
+    }
+
+    .sidebar-toggle-show svg { width: 14px; height: 14px; }
+
+    .sidebar-toggle-hide {
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      padding: 0;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+    }
+
+    .sidebar-toggle-hide:hover {
+      color: var(--text-primary);
+      border-color: var(--text-muted);
+      background: var(--bg-hover);
+    }
+
+    .sidebar-toggle-hide svg { width: 12px; height: 12px; }
+
+    .sidebar-header { position: relative; }
+
     /* Sidebar */
     .sidebar {
       width: 280px;
@@ -291,6 +347,41 @@
       background: var(--bg-elevated);
       border-color: var(--border);
     }
+
+    .session-item:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+
+    .session-delete-btn {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      padding: 0;
+      opacity: 0;
+      transition: opacity 0.15s, color 0.15s, border-color 0.15s, background 0.15s;
+    }
+
+    .session-item:hover .session-delete-btn,
+    .session-item:focus-within .session-delete-btn {
+      opacity: 1;
+    }
+
+    .session-delete-btn:hover {
+      color: #ef4444;
+      border-color: #ef4444;
+      background: rgba(239, 68, 68, 0.08);
+    }
+
+    .session-delete-btn svg { width: 12px; height: 12px; }
 
     .session-name {
       display: flex;
@@ -1462,16 +1553,28 @@
 </head>
 <body>
   <div class="app">
+    <button class="sidebar-toggle-show" onclick="toggleSidebar()" title="Show sidebar (\)" aria-label="Show sidebar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 6h18M3 12h18M3 18h18"/>
+      </svg>
+    </button>
     <!-- Sidebar -->
     <aside class="sidebar">
       <header class="sidebar-header">
-        <div class="logo">
-          <div class="logo-mark">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M5 13l4 4L19 7"/>
-            </svg>
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+          <div class="logo">
+            <div class="logo-mark">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M5 13l4 4L19 7"/>
+              </svg>
+            </div>
+            <span class="logo-text">Claude Tasks</span>
           </div>
-          <span class="logo-text">Claude Tasks</span>
+          <button class="sidebar-toggle-hide" onclick="toggleSidebar()" title="Hide sidebar (\)" aria-label="Hide sidebar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M15 18l-6-6 6-6"/>
+            </svg>
+          </button>
         </div>
         <div id="connection-status" class="connection">
           <span class="connection-dot"></span>
@@ -1841,6 +1944,61 @@
       await refreshCurrentView();
     }
 
+    let deleteSessionTargetId = null;
+
+    function deleteSession(sessionId, displayName, taskCount) {
+      deleteSessionTargetId = sessionId;
+      const label = displayName || sessionId.slice(0, 8) + '...';
+      const taskMsg = taskCount > 0
+        ? `This will permanently delete the session "${label}" and all ${taskCount} of its tasks from disk.`
+        : `This will permanently delete the empty session "${label}" from disk.`;
+      document.getElementById('delete-session-message').textContent = taskMsg;
+
+      const modal = document.getElementById('delete-session-modal');
+      modal.classList.add('visible');
+
+      const keyHandler = (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeDeleteSessionModal();
+          document.removeEventListener('keydown', keyHandler);
+        }
+      };
+      document.addEventListener('keydown', keyHandler);
+    }
+
+    function closeDeleteSessionModal() {
+      const modal = document.getElementById('delete-session-modal');
+      modal.classList.remove('visible');
+      deleteSessionTargetId = null;
+    }
+
+    async function confirmDeleteSession() {
+      if (!deleteSessionTargetId) return;
+      const sessionId = deleteSessionTargetId;
+      closeDeleteSessionModal();
+
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert('Failed to delete session: ' + (err.error || res.statusText));
+          return;
+        }
+        if (currentSessionId === sessionId) {
+          currentSessionId = null;
+          currentTasks = [];
+          sessionView.classList.remove('visible');
+          noSession.style.display = 'flex';
+          closeDetailPanel();
+        }
+        await refreshCurrentView();
+      } catch (e) {
+        console.error('Error deleting session:', e);
+        alert('Failed to delete session');
+      }
+    }
+
     // Topological sort for task deletion order
     function topologicalSort(tasks) {
       const result = [];
@@ -2151,11 +2309,19 @@
 
       const tooltip = [timeDisplay, gitBranch ? `Branch: ${gitBranch}` : ''].filter(Boolean).join(' | ');
 
+      const displayLabel = (sessionName || '').replace(/'/g, "\\'");
       return `
-        <button onclick="fetchTasks('${session.id}')" class="session-item ${isActive ? 'active' : ''} ${isArchived ? 'archived' : ''}" title="${tooltip}">
+        <div onclick="fetchTasks('${session.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();fetchTasks('${session.id}');}" role="button" tabindex="0" class="session-item ${isActive ? 'active' : ''} ${isArchived ? 'archived' : ''}" title="${tooltip}">
           <div class="session-name">
             <span>${escapeHtml(primaryName)}</span>
-            ${hasInProgress ? '<span class="pulse"></span>' : ''}
+            <div style="display: flex; align-items: center; gap: 6px;">
+              ${hasInProgress ? '<span class="pulse"></span>' : ''}
+              <button class="session-delete-btn" onclick="event.stopPropagation(); deleteSession('${session.id}', '${displayLabel}', ${total})" title="Delete session" aria-label="Delete session">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+              </button>
+            </div>
           </div>
           ${secondaryName ? `<div class="session-secondary">${escapeHtml(secondaryName)}</div>` : ''}
           ${gitBranch ? `<div class="session-branch">${gitBranch}</div>` : ''}
@@ -2164,7 +2330,7 @@
             <span class="progress-text">${session.completed}/${total}</span>
           </div>
           <div class="session-time">${formatDate(session.modifiedAt)}</div>
-        </button>
+        </div>
       `;
     }
 
@@ -2604,6 +2770,11 @@
         e.preventDefault();
         showHelpModal();
       }
+
+      if (e.key === '\\') {
+        e.preventDefault();
+        toggleSidebar();
+      }
     });
 
     function setupEventSource() {
@@ -2712,6 +2883,18 @@
         document.body.classList.add('light');
         document.getElementById('theme-icon-dark').style.display = 'none';
         document.getElementById('theme-icon-light').style.display = 'block';
+      }
+    }
+
+    function toggleSidebar() {
+      const app = document.querySelector('.app');
+      const hidden = app.classList.toggle('sidebar-hidden');
+      localStorage.setItem('ctv-sidebar-hidden', hidden ? '1' : '0');
+    }
+
+    function loadSidebarState() {
+      if (localStorage.getItem('ctv-sidebar-hidden') === '1') {
+        document.querySelector('.app').classList.add('sidebar-hidden');
       }
     }
 
@@ -2951,6 +3134,7 @@
 
     // Init
     loadTheme();
+    loadSidebarState();
     loadPreferences();
     updateNotificationButton();
     if (currentView === 'timeline') {
@@ -3046,6 +3230,28 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeDeleteConfirmModal()">Cancel</button>
         <button class="btn btn-primary" onclick="confirmDelete()" style="background: #ef4444; border-color: #ef4444;">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Session Confirmation Modal -->
+  <div id="delete-session-modal" class="modal-overlay" onclick="closeDeleteSessionModal()">
+    <div class="modal" onclick="event.stopPropagation()" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Delete Session</h3>
+        <button class="modal-close" onclick="closeDeleteSessionModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p id="delete-session-message" style="margin: 0 0 12px 0; color: var(--text-primary);"></p>
+        <p style="margin: 0; font-size: 13px; color: var(--text-secondary);">This action cannot be undone.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeDeleteSessionModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="confirmDeleteSession()" style="background: #ef4444; border-color: #ef4444;">Delete Session</button>
       </div>
     </div>
   </div>
